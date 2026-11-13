@@ -1,0 +1,1305 @@
+openapi: 3.1.0
+info:
+  title: SiteTrack Backend API
+  version: 1.0.0
+  description: Construction project, task dependency, and materials tracking API.
+servers:
+  - url: http://localhost:3000
+security:
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Projects
+  - name: Invitations
+  - name: Notifications
+  - name: Tasks
+  - name: Materials
+  - name: Project store
+  - name: Company store
+  - name: Deliveries
+paths:
+  /health:
+    get:
+      tags: [Auth]
+      summary: Check API and database readiness
+      security: []
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+  /docs:
+    get:
+      tags: [Auth]
+      summary: Get the OpenAPI document location
+      security: []
+      responses:
+        '200':
+          description: Documentation link
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocsResponse' }
+  /openapi.yaml:
+    get:
+      tags: [Auth]
+      summary: Download this OpenAPI document
+      security: []
+      responses:
+        '200':
+          description: OpenAPI YAML
+          content:
+            text/yaml:
+              schema: { type: string }
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register and create a long-lived session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, maxLength: 160 }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 10, maxLength: 256 }
+                role: { $ref: '#/components/schemas/AppRole', default: user }
+      responses:
+        '201':
+          description: User and bearer token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Create a session with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200':
+          description: User and bearer token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSessionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current session
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the current user's profile
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrentUserResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/users/{userId}/role:
+    patch:
+      tags: [Auth]
+      summary: Change an account role, SuperAdmin only
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: '#/components/schemas/AppRole' }
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CurrentUserResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List pending project invitations, newest first
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Invitations and unread notification count
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationsPage' }
+  /notifications/read:
+    post:
+      tags: [Notifications]
+      summary: Mark the current user's notifications as read
+      responses:
+        '204': { description: Notifications marked as read }
+  /notifications/{invitationId}/respond:
+    post:
+      tags: [Invitations]
+      summary: Accept or reject an invitation addressed to the current user
+      parameters:
+        - name: invitationId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [response]
+              properties:
+                response: { type: string, enum: [accept, reject] }
+      responses:
+        '200':
+          description: Updated invitation state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvitationResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects:
+    get:
+      tags: [Projects]
+      summary: List projects visible to the current user
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: lateOnly
+          in: query
+          schema: { type: boolean }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, startDate, percentageDone, lateTasks], default: name }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Project summaries and task counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPage' }
+    post:
+      tags: [Projects]
+      summary: Create a project, store, task counter, and project admin membership
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, plannedStart, plannedEnd]
+              properties:
+                name: { type: string, maxLength: 240 }
+                plannedStart: { type: string, format: date }
+                plannedEnd: { type: string, format: date }
+      responses:
+        '201':
+          description: Created project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      summary: Get a visible project
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Projects]
+      summary: Update a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 240 }
+                plannedStart: { type: string, format: date }
+                plannedEnd: { type: string, format: date }
+      responses:
+        '200':
+          description: Updated project
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Projects]
+      summary: Remove a project without reusing its identifier
+      responses:
+        '204': { description: Project removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/members:
+    get:
+      tags: [Projects]
+      summary: List project members and the first 100 pending invitations
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Members and pending invitations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectMembersPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/invitations:
+    get:
+      tags: [Invitations]
+      summary: List all pending project invitations with pagination
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of pending project invitations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PendingInvitationsPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Invitations]
+      summary: Invite a registered user, project admin only
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: Invitation created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InvitationCreated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/invitations/{invitationId}:
+    delete:
+      tags: [Invitations]
+      summary: Withdraw a pending invitation, project admin only
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: invitationId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '204': { description: Invitation withdrawn }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/members/{userId}:
+    delete:
+      tags: [Projects]
+      summary: Remove a member, project admin only
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '204': { description: Member removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/members/{userId}/admin:
+    patch:
+      tags: [Projects]
+      summary: Change project admin membership, project admin only
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [isAdmin]
+              properties:
+                isAdmin: { type: boolean }
+      responses:
+        '200':
+          description: Updated project member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MembershipAdminResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/tasks:
+    get:
+      tags: [Tasks]
+      summary: List project tasks with derived Late and Blocked flags
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/TaskStatus' }
+        - name: late
+          in: query
+          schema: { type: boolean }
+        - name: blocked
+          in: query
+          schema: { type: boolean }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [id, name, startDate, endDate, dependentCount], default: id }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Tasks and direct dependency information
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Tasks]
+      summary: Create a task with the next project-scoped identifier
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, plannedStart, plannedEnd]
+              properties:
+                name: { type: string, maxLength: 240 }
+                plannedStart: { type: string, format: date }
+                plannedEnd: { type: string, format: date }
+      responses:
+        '201':
+          description: Created task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/tasks/{taskId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+      - $ref: '#/components/parameters/TaskId'
+    get:
+      tags: [Tasks]
+      summary: Get task details, transitive dependencies, distances, and allowed actions
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskDetailsResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Tasks]
+      summary: Update task name or planned dates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 240 }
+                plannedStart: { type: string, format: date }
+                plannedEnd: { type: string, format: date }
+      responses:
+        '200':
+          description: Updated task
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Tasks]
+      summary: Remove a task and its dependency edges without reusing its identifier
+      responses:
+        '204': { description: Task removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/tasks/{taskId}/dependencies:
+    put:
+      tags: [Tasks]
+      summary: Replace direct dependencies before the task starts
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dependsOn]
+              properties:
+                dependsOn:
+                  type: array
+                  maxItems: 3000
+                  items: { type: string, pattern: '^PRJ-[0-9]{4,}-T-[0-9]{4,}$' }
+      responses:
+        '200':
+          description: Direct dependencies replaced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskDependenciesResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/tasks/{taskId}/actions/{action}:
+    post:
+      tags: [Tasks]
+      summary: Apply a valid task status action
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/TaskId'
+        - name: action
+          in: path
+          required: true
+          schema: { type: string, enum: [start, done, reopen] }
+      responses:
+        '200':
+          description: Updated task status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TaskActionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /materials:
+    get:
+      tags: [Materials]
+      summary: Search the shared materials catalogue
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Material catalogue page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaterialPage' }
+    post:
+      tags: [Materials]
+      summary: Add a material to the shared catalogue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, category, unit]
+              properties:
+                name: { type: string, maxLength: 240 }
+                category: { type: string, maxLength: 120 }
+                unit: { type: string, maxLength: 40 }
+      responses:
+        '201':
+          description: Created material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaterialResponse' }
+  /materials/{materialId}:
+    parameters:
+      - name: materialId
+        in: path
+        required: true
+        schema: { type: integer, minimum: 1 }
+    patch:
+      tags: [Materials]
+      summary: Update a material not yet removed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 240 }
+                category: { type: string, maxLength: 120 }
+                unit: { type: string, maxLength: 40 }
+      responses:
+        '200':
+          description: Updated material
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MaterialResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Materials]
+      summary: Remove an unused material
+      responses:
+        '204': { description: Material removed }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /projects/{projectId}/store:
+    get:
+      tags: [Project store]
+      summary: List materials and quantities in a project store
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, quantity, lastDelivery], default: name }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Project stock page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorePage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/deliveries:
+    get:
+      tags: [Deliveries]
+      summary: List incoming and outgoing deliveries for a project store
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - name: direction
+          in: query
+          schema: { type: string, enum: [incoming, outgoing] }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/DeliveryStatus' }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Project deliveries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Deliveries]
+      summary: Send stock from a project store to the company store
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                lines:
+                  type: array
+                  minItems: 1
+                  maxItems: 20000
+                  items: { $ref: '#/components/schemas/DeliveryLineInput' }
+      responses:
+        '201':
+          description: Delivery initiated and sender stock reduced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryInitiated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /company-store/stock:
+    get:
+      tags: [Company store]
+      summary: List central stock, quantities in transit, reorder points, and status
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, enum: [out_of_stock, low_stock, available] }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [name, quantity, status], default: name }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Company stock page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompanyStockPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /company-store/stock/{materialId}/add:
+    post:
+      tags: [Company store]
+      summary: Add supplier stock to the company store
+      parameters:
+        - name: materialId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { $ref: '#/components/schemas/Quantity' }
+      responses:
+        '201':
+          description: Stock added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StockChangeResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /company-store/stock/{materialId}/reorder-point:
+    put:
+      tags: [Company store]
+      summary: Set the company store reorder point
+      parameters:
+        - name: materialId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reorderPoint]
+              properties:
+                reorderPoint: { $ref: '#/components/schemas/Quantity' }
+      responses:
+        '200':
+          description: Reorder point updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReorderPointResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /company-store/deliveries:
+    get:
+      tags: [Deliveries]
+      summary: List company store deliveries across projects
+      parameters:
+        - name: projectId
+          in: query
+          schema: { type: string, pattern: '^PRJ-[0-9]{4,}$' }
+        - name: direction
+          in: query
+          schema: { type: string, enum: [incoming, outgoing] }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/DeliveryStatus' }
+        - name: dateFrom
+          in: query
+          schema: { type: string, format: date }
+        - name: dateTo
+          in: query
+          schema: { type: string, format: date }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Company deliveries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryPage' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Deliveries]
+      summary: Send company stock to one project store
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId, lines]
+              properties:
+                projectId: { type: string, pattern: '^PRJ-[0-9]{4,}$' }
+                lines:
+                  type: array
+                  minItems: 1
+                  maxItems: 20000
+                  items: { $ref: '#/components/schemas/DeliveryLineInput' }
+      responses:
+        '201':
+          description: Delivery initiated and sender stock reduced
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryInitiated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /deliveries/{deliveryId}/{action}:
+    post:
+      tags: [Deliveries]
+      summary: Record, reject, or cancel an in-transit delivery
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: action
+          in: path
+          required: true
+          schema: { type: string, enum: [record, reject, cancel] }
+      responses:
+        '200':
+          description: Updated delivery state and stock balances
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryActionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^PRJ-[0-9]{4,}$' }
+    TaskId:
+      name: taskId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^PRJ-[0-9]{4,}-T-[0-9]{4,}$' }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+  schemas:
+    AppRole:
+      type: string
+      enum: [user, company_store_manager, superadmin]
+    TaskStatus:
+      type: string
+      enum: [not_started, in_progress, done]
+    DeliveryStatus:
+      type: string
+      enum: [in_transit, delivered, rejected, cancelled]
+    Quantity:
+      oneOf:
+        - type: string
+        - type: number
+      description: Non-negative decimal with at most three fractional digits.
+      example: '12.500'
+    DeliveryLineInput:
+      type: object
+      required: [materialId, quantity]
+      properties:
+        materialId: { type: integer, minimum: 1 }
+        quantity: { $ref: '#/components/schemas/Quantity' }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+    User:
+      type: object
+      required: [id, name, email, role]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/AppRole' }
+    HealthResponse:
+      type: object
+      required: [status, database]
+      properties:
+        status: { type: string, enum: [ok] }
+        database: { type: string, enum: [ok] }
+    DocsResponse:
+      type: object
+      required: [openapi]
+      properties:
+        openapi: { type: string, example: /openapi.yaml }
+    Pagination:
+      type: object
+      required: [page, limit, total]
+      properties:
+        page: { type: integer, minimum: 1 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+    ProjectSummary:
+      type: object
+      required: [id, name, plannedStart, plannedEnd, isProjectAdmin, memberCount, taskCounts, percentageDone, lateTaskCount, blockedTaskCount]
+      properties:
+        id: { type: string, example: PRJ-0042 }
+        name: { type: string }
+        plannedStart: { type: string, format: date }
+        plannedEnd: { type: string, format: date }
+        isProjectAdmin: { type: boolean }
+        memberCount: { type: integer }
+        taskCounts:
+          type: object
+          properties:
+            notStarted: { type: integer }
+            inProgress: { type: integer }
+            done: { type: integer }
+        percentageDone: { type: number }
+        lateTaskCount: { type: integer }
+        blockedTaskCount: { type: integer }
+    ProjectPage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ProjectSummary' }
+        - $ref: '#/components/schemas/Pagination'
+    Project:
+      type: object
+      required: [id, name, plannedStart, plannedEnd]
+      properties:
+        id: { type: string, example: PRJ-0042 }
+        name: { type: string }
+        plannedStart: { type: string, format: date }
+        plannedEnd: { type: string, format: date }
+        isProjectAdmin: { type: boolean }
+    ProjectResponse:
+      type: object
+      required: [project]
+      properties:
+        project: { $ref: '#/components/schemas/Project' }
+    AuthSessionResponse:
+      type: object
+      required: [user, accessToken, tokenType, expiresAt]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        accessToken: { type: string }
+        tokenType: { type: string, enum: [Bearer] }
+        expiresAt: { type: string, format: date-time }
+    CurrentUserResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+    TaskDependency:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    TaskSummary:
+      type: object
+      required: [id, name, plannedStart, plannedEnd, status, late, blocked, dependsOn, dependentCount]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        plannedStart: { type: string, format: date }
+        plannedEnd: { type: string, format: date }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        late: { type: boolean }
+        blocked: { type: boolean }
+        dependsOn:
+          type: array
+          items: { $ref: '#/components/schemas/TaskDependency' }
+        dependentCount: { type: integer, minimum: 0 }
+    TaskPage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/TaskSummary' }
+        - $ref: '#/components/schemas/Pagination'
+    TaskDetailsResponse:
+      type: object
+      required: [task, allowedActions, waitsOn, waitedOnBy]
+      properties:
+        task:
+          type: object
+          required: [id, name, plannedStart, plannedEnd, status, late, blocked]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            plannedStart: { type: string, format: date }
+            plannedEnd: { type: string, format: date }
+            status: { $ref: '#/components/schemas/TaskStatus' }
+            late: { type: boolean }
+            blocked: { type: boolean }
+        allowedActions:
+          type: object
+          required: [start, markDone, reopen]
+          properties:
+            start: { type: boolean }
+            markDone: { type: boolean }
+            reopen: { type: boolean }
+        waitsOn:
+          type: array
+          items: { $ref: '#/components/schemas/TaskDependencyDistance' }
+        waitedOnBy:
+          type: array
+          items: { $ref: '#/components/schemas/TaskDependencyDistance' }
+    TaskDependencyDistance:
+      allOf:
+        - $ref: '#/components/schemas/TaskDependency'
+        - type: object
+          required: [stepsAway]
+          properties:
+            stepsAway: { type: integer, minimum: 1 }
+    TaskResponse:
+      type: object
+      required: [task]
+      properties:
+        task:
+          type: object
+          required: [id, name, plannedStart, plannedEnd, status]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            plannedStart: { type: string, format: date }
+            plannedEnd: { type: string, format: date }
+            status: { $ref: '#/components/schemas/TaskStatus' }
+            late: { type: boolean }
+            blocked: { type: boolean }
+    Material:
+      type: object
+      required: [id, name, category, unit]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        category: { type: string }
+        unit: { type: string }
+    MaterialResponse:
+      type: object
+      required: [material]
+      properties:
+        material: { $ref: '#/components/schemas/Material' }
+    MaterialPage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/Material' }
+        - $ref: '#/components/schemas/Pagination'
+    StoreItem:
+      allOf:
+        - $ref: '#/components/schemas/Material'
+        - type: object
+          required: [quantity, lastDeliveryAt]
+          properties:
+            quantity: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+            lastDeliveryAt: { type: [string, 'null'], format: date-time }
+    StorePage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/StoreItem' }
+        - $ref: '#/components/schemas/Pagination'
+    CompanyStockItem:
+      type: object
+      required: [materialId, name, category, unit, quantity, quantityInTransit, reorderPoint, status]
+      properties:
+        materialId: { type: string }
+        name: { type: string }
+        category: { type: string }
+        unit: { type: string }
+        quantity: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+        quantityInTransit: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+        reorderPoint: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+        status: { type: string, enum: [out_of_stock, low_stock, available] }
+    CompanyStockPage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/CompanyStockItem' }
+        - $ref: '#/components/schemas/Pagination'
+    DeliveryLine:
+      type: object
+      required: [materialId, name, unit, quantity]
+      properties:
+        materialId: { type: string }
+        name: { type: string }
+        unit: { type: string }
+        quantity: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+    Delivery:
+      type: object
+      required: [id, direction, status, lines, sentAt, receivedAt, sender, receiver]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        projectName: { type: string }
+        direction: { type: string, enum: [incoming, outgoing] }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryLine' }
+        sentAt: { type: string, format: date-time }
+        receivedAt: { type: [string, 'null'], format: date-time }
+        sender:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: string }
+        receiver:
+          oneOf:
+            - type: object
+              required: [id, name]
+              properties:
+                id: { type: string }
+                name: { type: string }
+            - type: 'null'
+    DeliveryPage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/Delivery' }
+        - $ref: '#/components/schemas/Pagination'
+    DeliveryInitiated:
+      type: object
+      required: [deliveryId, projectId, status]
+      properties:
+        deliveryId: { type: string }
+        projectId: { type: string }
+        status: { type: string, enum: [in_transit] }
+    ProjectMember:
+      type: object
+      required: [id, name, email, isProjectAdmin, joinedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        isProjectAdmin: { type: boolean }
+        joinedAt: { type: string, format: date-time }
+    PendingInvitation:
+      type: object
+      required: [id, status, created_at, user_id, name, email, invited_by_name]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [pending] }
+        created_at: { type: string, format: date-time }
+        user_id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        invited_by_name: { type: string }
+    PendingInvitationsPage:
+      allOf:
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/PendingInvitation' }
+        - $ref: '#/components/schemas/Pagination'
+    ProjectMembersPage:
+      allOf:
+        - type: object
+          required: [members, pendingInvitations]
+          properties:
+            members:
+              type: array
+              items: { $ref: '#/components/schemas/ProjectMember' }
+            pendingInvitations:
+              type: array
+              items: { $ref: '#/components/schemas/PendingInvitation' }
+        - $ref: '#/components/schemas/Pagination'
+    Notification:
+      type: object
+      required: [id, invitationId, projectId, projectName, invitedBy, createdAt, unread]
+      properties:
+        id: { type: string }
+        invitationId: { type: string }
+        projectId: { type: string }
+        projectName: { type: string }
+        invitedBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        unread: { type: boolean }
+    NotificationsPage:
+      allOf:
+        - type: object
+          required: [items, unreadCount]
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/Notification' }
+            unreadCount: { type: integer, minimum: 0 }
+        - $ref: '#/components/schemas/Pagination'
+    InvitationCreated:
+      type: object
+      required: [invitation]
+      properties:
+        invitation:
+          type: object
+          required: [id, status, created_at, projectId, invitedUser]
+          properties:
+            id: { type: string }
+            status: { type: string, enum: [pending] }
+            created_at: { type: string, format: date-time }
+            projectId: { type: string }
+            invitedUser:
+              type: object
+              required: [id, name, email]
+              properties:
+                id: { type: string }
+                name: { type: string }
+                email: { type: string, format: email }
+    InvitationResponse:
+      type: object
+      required: [invitationId, status, projectId]
+      properties:
+        invitationId: { type: integer }
+        status: { type: string, enum: [accepted, rejected] }
+        projectId: { type: string }
+    MembershipAdminResponse:
+      type: object
+      required: [userId, isProjectAdmin]
+      properties:
+        userId: { type: integer }
+        isProjectAdmin: { type: boolean }
+    TaskDependenciesResponse:
+      type: object
+      required: [taskId, dependsOn]
+      properties:
+        taskId: { type: string }
+        dependsOn:
+          type: array
+          items: { type: string }
+    TaskActionResponse:
+      type: object
+      required: [taskId, status]
+      properties:
+        taskId: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+    StockChangeResponse:
+      type: object
+      required: [materialId, quantity]
+      properties:
+        materialId: { type: integer }
+        quantity: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+    ReorderPointResponse:
+      type: object
+      required: [materialId, reorderPoint]
+      properties:
+        materialId: { type: integer }
+        reorderPoint: { type: string, pattern: '^[0-9]+[.][0-9]{3}$' }
+    DeliveryActionResponse:
+      type: object
+      required: [deliveryId, status]
+      properties:
+        deliveryId: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+  responses:
+    BadRequest:
+      description: Invalid request body or parameter
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, expired, or revoked bearer token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Role or project admin permission is insufficient
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource is absent or hidden by access rules
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Requested transition conflicts with current state
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
